@@ -71,6 +71,14 @@
         <button onclick="runTest()">🔄 Run VAD Test</button>
         <input type="file" id="audio-file-input" accept="audio/*" onchange="loadLocalAudio(event)" style="display: none;">
         <button onclick="document.getElementById('audio-file-input').click()">📁 Load Audio File</button>
+        <button id="recordBtn" onclick="toggleRecording()">🎤 Start Recording</button>
+        <button onclick="downloadRecording()" id="downloadBtn" style="display: none;">💾 Download Recording</button>
+        <button onclick="clearRecording()" id="clearBtn" style="display: none;">🗑️ Clear Recording</button>
+    </div>
+    
+    <div id="recordingStatus" style="text-align: center; margin: 10px 0; display: none;">
+        <span id="recordingText">🔴 Recording...</span>
+        <span id="recordingTime">0:00</span>
     </div>
     
     <audio id="audio-player" controls style="width: 100%; margin: 10px 0;"></audio>
@@ -94,6 +102,13 @@
         let currentAudioBuffer = null;
         let currentAudioUrl = './patth.wav';
         let wavesurfer = null;
+        
+        // Recording variables
+        let mediaRecorder = null;
+        let recordedChunks = [];
+        let isRecording = false;
+        let recordingStartTime = 0;
+        let recordingTimer = null;
 
         function addResult(containerId, text, type = '') {
             const div = document.createElement('div');
@@ -117,13 +132,27 @@
 
         async function loadAudio() {
             try {
-                const response = await fetch(currentAudioUrl);
-                const blob = await response.blob();
-                const audioUrl = URL.createObjectURL(blob);
+                let blob;
+                let audioUrl;
+                
+                if (currentAudioUrl.startsWith('blob:')) {
+                    // Already a blob URL from recording
+                    audioUrl = currentAudioUrl;
+                    const response = await fetch(currentAudioUrl);
+                    blob = await response.blob();
+                } else {
+                    // Regular file URL
+                    const response = await fetch(currentAudioUrl);
+                    blob = await response.blob();
+                    audioUrl = URL.createObjectURL(blob);
+                }
                 
                 document.getElementById('audio-player').src = audioUrl;
                 
                 const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                if (audioContext.state === 'suspended') {
+                    await audioContext.resume();
+                }
                 const arrayBuffer = await blob.arrayBuffer();
                 currentAudioBuffer = await audioContext.decodeAudioData(arrayBuffer);
                 
@@ -191,6 +220,13 @@
                 if (!window.vad) {
                     throw new Error('VAD library not loaded');
                 }
+
+                // Log audio data stats for debugging waveform differences
+                const audioDataForStats = currentAudioBuffer.getChannelData(0);
+                const min = Math.min(...audioDataForStats);
+                const max = Math.max(...audioDataForStats);
+                const rms = Math.sqrt(audioDataForStats.reduce((sum, val) => sum + val * val, 0) / audioDataForStats.length);
+                addResult(resultsId, `📊 Audio stats: min=${min.toFixed(4)}, max=${max.toFixed(4)}, rms=${rms.toFixed(4)}`);
                 
                 const vadInstance = await window.vad.NonRealTimeVAD.new({
                     positiveSpeechThreshold: 0.3,
@@ -264,6 +300,106 @@
             });
         }
 
+        async function toggleRecording() {
+            if (!isRecording) {
+                await startRecording();
+            } else {
+                stopRecording();
+            }
+        }
+
+        async function startRecording() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                recordedChunks = [];
+                mediaRecorder = new MediaRecorder(stream);
+                
+                mediaRecorder.ondataavailable = (event) => {
+                    if (event.data.size > 0) {
+                        recordedChunks.push(event.data);
+                    }
+                };
+                
+                mediaRecorder.onstop = () => {
+                    const blob = new Blob(recordedChunks, { type: 'audio/wav' });
+                    const url = URL.createObjectURL(blob);
+                    currentAudioUrl = url;
+                    document.getElementById('audio-player').src = url;
+                    
+                    // Show download and clear buttons
+                    document.getElementById('downloadBtn').style.display = 'inline-block';
+                    document.getElementById('clearBtn').style.display = 'inline-block';
+                    
+                    // Update button text
+                    document.getElementById('recordBtn').textContent = '🎤 Start Recording';
+                    
+                    // Stop all tracks
+                    stream.getTracks().forEach(track => track.stop());
+                };
+                
+                mediaRecorder.start();
+                isRecording = true;
+                recordingStartTime = Date.now();
+                
+                // Update UI
+                document.getElementById('recordBtn').textContent = '⏹️ Stop Recording';
+                document.getElementById('recordingStatus').style.display = 'block';
+                
+                // Start timer
+                updateRecordingTimer();
+                recordingTimer = setInterval(updateRecordingTimer, 1000);
+                
+            } catch (error) {
+                alert('Error accessing microphone: ' + error.message);
+            }
+        }
+
+        function stopRecording() {
+            if (mediaRecorder && isRecording) {
+                mediaRecorder.stop();
+                isRecording = false;
+                
+                // Clear timer
+                if (recordingTimer) {
+                    clearInterval(recordingTimer);
+                    recordingTimer = null;
+                }
+                
+                // Hide recording status
+                document.getElementById('recordingStatus').style.display = 'none';
+            }
+        }
+
+        function updateRecordingTimer() {
+            const elapsed = Math.floor((Date.now() - recordingStartTime) / 1000);
+            const minutes = Math.floor(elapsed / 60);
+            const seconds = elapsed % 60;
+            document.getElementById('recordingTime').textContent = 
+                `${minutes}:${seconds.toString().padStart(2, '0')}`;
+        }
+
+        function downloadRecording() {
+            if (recordedChunks.length > 0) {
+                const blob = new Blob(recordedChunks, { type: 'audio/wav' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'recording_' + new Date().getTime() + '.wav';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            }
+        }
+
+        function clearRecording() {
+            currentAudioUrl = './patth.wav';
+            document.getElementById('audio-player').src = currentAudioUrl;
+            document.getElementById('clearBtn').style.display = 'none';
+            document.getElementById('downloadBtn').style.display = 'none';
+            recordedChunks = [];
+        }
+
         async function runTest() {
             clearResults();
             
@@ -281,10 +417,14 @@
 
         window.runTest = runTest;
         window.loadLocalAudio = loadLocalAudio;
+        window.toggleRecording = toggleRecording;
+        window.downloadRecording = downloadRecording;
+        window.clearRecording = clearRecording;
 
         document.addEventListener('DOMContentLoaded', () => {
             setTimeout(runTest, 1000);
         });
+    </script>
     </script>
 </body>
 </html>
