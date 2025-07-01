@@ -1,0 +1,14 @@
+feat: Create static VAD test site for GitHub Pages
+
+This commit sets up a simplified, single-version VAD test page, ready for deployment as a static site.
+
+It includes:
+- A new `vad-test-site` directory, initialized as a git repository.
+- A streamlined `index.html` that exclusively uses the stable `0.0.22` version of the VAD library, removing the multi-version comparison and advanced settings for clarity.
+- A GitHub Actions workflow file (`.github/workflows/deploy.yml`) to automatically build and deploy the site to GitHub Pages.
+- A `README.md` with clear instructions for running the site locally using a simple Python web server.
+- The `patth.wav` audio file for out-of-the-box testing.
+
+This provides an easy-to-share, public-facing tool for demonstrating and testing the VAD's functionality.
+
+Co-authored-by: Ian <ian@othercorp.com>
